@@ -1,0 +1,21 @@
+Yabandeh Builder
+Time: 2026-10-12T19:35:11
+Result: SUCCESS
+Project: /storage/emulated/0/Yabandeh
+
+Existing project files:
+core/__init__.py | 0 bytes
+core/browser.py | 3132 bytes
+core/connection_status.py | 1117 bytes
+core/downloads.py | 2593 bytes
+core/file_manager.py | 2099 bytes
+core/search_engine.py | 1406 bytes
+core/settings.py | 1394 bytes
+core/tabs.py | 2601 bytes
+data/__init__.py | 0 bytes
+data/project_structure.txt | 274 bytes
+main.py | 10968 bytes
+main.py.backup | 10687 bytes
+tools/__init__.py | 0 bytes
+ui/__init__.py | 0 bytes
+ui/ui.py | 1284 bytes

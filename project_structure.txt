@@ -1,0 +1,16 @@
+Yabandeh project structure
+/storage/emulated/0/Yabandeh
+
+core/__init__.py
+core/browser.py
+core/connection_status.py
+core/downloads.py
+core/file_manager.py
+core/search_engine.py
+core/settings.py
+core/tabs.py
+data/__init__.py
+main.py
+tools/__init__.py
+ui/__init__.py
+ui/ui.py

@@ -1,0 +1,403 @@
+import json
+import time
+from datetime import datetime
+from pathlib import Path
+
+from kivy.app import App
+from kivy.clock import Clock
+from kivy.metrics import dp
+from kivy.core.clipboard import Clipboard
+
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.button import Button
+from kivy.uix.scrollview import ScrollView
+
+from browser import BrowserController
+from ui import create_toolbar
+
+
+BASE = Path("/storage/emulated/0/Yabandeh")
+DATA = BASE / "data"
+
+
+class YabandehApp(App):
+
+    def build(self):
+        self.title = "Yabandeh"
+
+        DATA.mkdir(parents=True, exist_ok=True)
+
+        self.history_file = DATA / "history.json"
+        self.favorites_file = DATA / "favorites.json"
+
+        self.history = self.read_json(self.history_file, [])
+        self.favorites = self.read_json(self.favorites_file, [])
+
+        self.current_url = ""
+        self.current_text = ""
+        self.back_stack = []
+        self.forward_stack = []
+
+        self.hour_marker = None
+        self.light_until = 0
+
+        self.browser = BrowserController(self)
+
+        root = BoxLayout(
+            orientation="vertical",
+            spacing=dp(2),
+            padding=dp(2)
+        )
+
+        # نوار بالایی
+        self.top_bar, self.top_buttons = create_toolbar(
+            self.on_top_button
+        )
+        root.add_widget(self.top_bar)
+
+        # نوار آدرس
+        address_row = BoxLayout(
+            size_hint_y=None,
+            height=dp(40),
+            spacing=dp(3)
+        )
+
+        self.address = TextInput(
+            hint_text="Address or search",
+            multiline=False,
+            font_size=dp(14),
+            size_hint_x=0.85
+        )
+        self.address.bind(
+            on_text_validate=lambda *_: self.open_page()
+        )
+
+        go_button = Button(
+            text="Go",
+            size_hint_x=0.15
+        )
+        go_button.bind(
+            on_release=lambda *_: self.open_page()
+        )
+
+        address_row.add_widget(self.address)
+        address_row.add_widget(go_button)
+        root.add_widget(address_row)
+
+        # محتوای صفحه
+        self.page_scroll = ScrollView(
+            do_scroll_x=False
+        )
+
+        self.page_label = Label(
+            text="Yabandeh\n\nEnter an address or search term.",
+            size_hint_y=None,
+            halign="left",
+            valign="top",
+            padding=(dp(10), dp(10))
+        )
+
+        self.page_label.bind(
+            width=lambda obj, width: setattr(
+                obj, "text_size", (width - dp(20), None)
+            )
+        )
+
+        self.page_label.bind(
+            texture_size=lambda obj, size: setattr(
+                obj, "height", size[1] + dp(20)
+            )
+        )
+
+        self.page_scroll.add_widget(self.page_label)
+        root.add_widget(self.page_scroll)
+
+        # پیام وضعیت
+        self.status = Label(
+            text="Ready",
+            size_hint_y=None,
+            height=dp(20),
+            font_size=dp(10)
+        )
+        root.add_widget(self.status)
+
+        # نوار پایینی
+        self.bottom_bar = BoxLayout(
+            orientation="horizontal",
+            size_hint_y=None,
+            height=dp(36),
+            spacing=dp(2)
+        )
+
+        bottom_names = [
+            "Setups",
+            "Tool",
+            "Links",
+            "Muse",
+            "Copy",
+            "PC_Phone",
+            "Text Size"
+        ]
+
+        for name in bottom_names:
+            button = Button(
+                text=name,
+                font_size=dp(9)
+            )
+            button.bind(on_release=self.on_bottom_button)
+            self.bottom_bar.add_widget(button)
+
+        root.add_widget(self.bottom_bar)
+
+        Clock.schedule_interval(self.hourly_effect, 0.5)
+
+        return root
+
+    def read_json(self, path, default):
+        try:
+            with open(path, "r", encoding="utf-8") as file:
+                return json.load(file)
+        except (OSError, ValueError, TypeError):
+            return default
+
+    def save_json(self, path, value):
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(
+                    value,
+                    file,
+                    ensure_ascii=False,
+                    indent=2
+                )
+        except OSError as error:
+            self.status.text = "Save error: " + str(error)
+
+    # ---------------- Navigation ----------------
+
+    def open_page(self):
+        value = self.address.text.strip()
+
+        if not value:
+            return
+
+        url = self.browser.normalize_url(value)
+
+        if self.current_url and self.current_url != url:
+            self.back_stack.append(self.current_url)
+
+        self.forward_stack.clear()
+        self.address.text = url
+        self.status.text = "Loading..."
+
+        self.browser.open_url(url, self.on_page_loaded)
+
+    def on_page_loaded(self, url, text, error=None):
+        self.current_url = url
+        self.current_text = text
+        self.page_label.text = text
+        self.page_scroll.scroll_y = 1
+
+        if error:
+            self.status.text = "Loading failed"
+        else:
+            self.status.text = "Page loaded"
+
+            self.history.append({
+                "url": url,
+                "time": datetime.now().isoformat(
+                    timespec="seconds"
+                )
+            })
+
+            self.history = self.history[-500:]
+            self.save_json(self.history_file, self.history)
+
+        Clock.schedule_once(
+            lambda dt: self.clear_status(),
+            4
+        )
+
+    def clear_status(self):
+        self.status.text = "Ready"
+
+    def navigate_to(self, url):
+        if not url:
+            return
+
+        self.address.text = url
+        self.status.text = "Loading..."
+        self.browser.open_url(url, self.on_page_loaded)
+
+    def go_back(self):
+        if not self.back_stack:
+            self.status.text = "No previous page"
+            return
+
+        if self.current_url:
+            self.forward_stack.append(self.current_url)
+
+        self.navigate_to(self.back_stack.pop())
+
+    def go_forward(self):
+        if not self.forward_stack:
+            self.status.text = "No next page"
+            return
+
+        if self.current_url:
+            self.back_stack.append(self.current_url)
+
+        self.navigate_to(self.forward_stack.pop())
+
+    # ---------------- Top buttons ----------------
+
+    def on_top_button(self, name):
+        if name == "Back":
+            self.go_back()
+
+        elif name == "Forward":
+            self.go_forward()
+
+        elif name == "Copy MW":
+            self.copy_current_page()
+
+        elif name == "Favorites":
+            self.add_favorite()
+
+        elif name == "File":
+            self.save_page()
+
+        elif name == "Setup":
+            self.status.text = "Setup options: later stage"
+
+        elif name == "PC_Android":
+            self.status.text = "Display mode: later stage"
+
+        elif name == "Send":
+            self.status.text = "Send: later stage"
+
+    # ---------------- Bottom buttons ----------------
+
+    def on_bottom_button(self, button):
+        name = button.text
+
+        if name == "Copy":
+            self.copy_current_page()
+
+        elif name == "Setups":
+            self.on_top_button("Setup")
+
+        elif name == "Tool":
+            self.status.text = "Tools: later stage"
+
+        elif name == "Links":
+            self.show_history()
+
+        elif name == "Muse":
+            self.status.text = "Muse: later stage"
+
+        elif name == "PC_Phone":
+            self.status.text = "PC/Phone mode: later stage"
+
+        elif name == "Text Size":
+            self.page_label.font_size += dp(1)
+
+            if self.page_label.font_size > dp(28):
+                self.page_label.font_size = dp(12)
+
+    # ---------------- Copy and save ----------------
+
+    def copy_current_page(self):
+        try:
+            Clipboard.copy(
+                self.current_text or self.current_url
+            )
+            self.status.text = "Copied"
+        except Exception as error:
+            self.status.text = "Copy error: " + str(error)
+
+    def save_page(self):
+        if not self.current_text:
+            self.status.text = "No page to save"
+            return
+
+        path = BASE / "pages" / "saved_page.txt"
+
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write("URL: " + self.current_url + "\n\n")
+                file.write(self.current_text)
+
+            self.status.text = "Page saved"
+        except OSError as error:
+            self.status.text = "Save error: " + str(error)
+
+    # ---------------- Favorites ----------------
+
+    def add_favorite(self):
+        if not self.current_url:
+            self.status.text = "No page to add"
+            return
+
+        if self.current_url not in self.favorites:
+            self.favorites.append(self.current_url)
+            self.save_json(
+                self.favorites_file,
+                self.favorites
+            )
+            self.status.text = "Added to Favorites"
+        else:
+            self.status.text = "Already in Favorites"
+
+    # ---------------- History ----------------
+
+    def show_history(self):
+        if not self.history:
+            self.status.text = "History is empty"
+            return
+
+        text = "\n\n".join(
+            item.get("url", "")
+            for item in reversed(self.history[-50:])
+        )
+
+        self.page_label.text = text
+        self.status.text = "Recent history"
+
+    # ---------------- Hourly light show ----------------
+
+    def hourly_effect(self, dt):
+        now = datetime.now()
+        marker = now.strftime("%Y-%m-%d-%H")
+
+        if now.minute == 0 and now.second < 2:
+            if marker != self.hour_marker:
+                self.hour_marker = marker
+                self.light_until = time.time() + 3
+
+        if time.time() < self.light_until:
+            colors = [
+                (1, 0.1, 0.1, 1),
+                (1, 0.6, 0.1, 1),
+                (1, 0.9, 0.1, 1),
+                (0.1, 0.8, 0.3, 1),
+                (0.1, 0.5, 1, 1),
+                (0.7, 0.2, 1, 1),
+                (1, 0.2, 0.7, 1),
+            ]
+
+            color = colors[int(time.time() * 8) % len(colors)]
+
+            for button in self.top_buttons.values():
+                button.background_color = color
+
+        elif self.light_until:
+            for button in self.top_buttons.values():
+                button.background_color = button.original_color
+
+            self.light_until = 0
+
+
+if __name__ == "__main__":
+    YabandehApp().run()

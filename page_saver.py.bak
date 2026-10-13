@@ -1,0 +1,7 @@
+from pathlib import Path
+def save_page(content, title='page', extension='txt'):
+    folder = Path('/storage/emulated/0/Yabandeh/pages')
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / (str(title) + '.' + str(extension))
+    path.write_text(str(content), encoding='utf-8')
+    return str(path)

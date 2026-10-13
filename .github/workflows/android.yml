@@ -1,0 +1,30 @@
+name: ZodJo Source Validation
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate Python syntax
+        run: python -m py_compile app/src/main/python/main.py
+
+      - name: Check required project files
+        run: |
+          test -f README.md
+          test -f buildozer.spec
+          test -f app/src/main/python/main.py
+          test -f app/src/main/assets/index.html

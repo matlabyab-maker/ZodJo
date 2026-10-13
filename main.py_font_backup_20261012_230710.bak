@@ -1,0 +1,355 @@
+from pathlib import Path
+from urllib.parse import urlparse
+import threading
+import webbrowser
+
+from kivy.app import App
+from kivy.clock import Clock
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.label import Label
+from kivy.uix.scrollview import ScrollView
+
+BASE = Path("/storage/emulated/0/Yabandeh")
+(BASE / "data").mkdir(parents=True, exist_ok=True)
+(BASE / "downloads").mkdir(parents=True, exist_ok=True)
+(BASE / "pages").mkdir(parents=True, exist_ok=True)
+
+# بارگذاری ماژول‌ها با حفظ سازگاری با هر دو ساختار
+try:
+    from core.history import HistoryManager
+except ImportError:
+    HistoryManager = None
+
+try:
+    from core.bookmarks import BookmarkManager
+except ImportError:
+    BookmarkManager = None
+
+try:
+    from core.settings import SettingsManager
+except ImportError:
+    SettingsManager = None
+
+try:
+    from core.search_engine import SearchEngine
+except ImportError:
+    SearchEngine = None
+
+try:
+    from core.page_saver import save_page
+except ImportError:
+    save_page = None
+
+
+class YabandehApp(App):
+    def build(self):
+        self.title = "Yabandeh"
+        self.history = HistoryManager() if HistoryManager else None
+        self.bookmarks = BookmarkManager() if BookmarkManager else None
+        self.settings = SettingsManager() if SettingsManager else None
+        self.search = SearchEngine() if SearchEngine else None
+
+        self.current_url = ""
+        self.current_title = "Yabandeh"
+        self.current_text = ""
+        self.back_stack = []
+
+        root = BoxLayout(orientation="vertical", spacing=3, padding=4)
+
+        address_row = BoxLayout(size_hint_y=None, height=44, spacing=3)
+        self.address = TextInput(
+            hint_text="آدرس سایت یا عبارت جست‌وجو",
+            multiline=False,
+            size_hint_x=1
+        )
+        self.address.bind(on_text_validate=lambda *_: self.open_address())
+        address_row.add_widget(self.address)
+        address_row.add_widget(
+            Button(text="برو", size_hint_x=None, width=58,
+                   on_release=lambda *_: self.open_address())
+        )
+        root.add_widget(address_row)
+
+        toolbar = BoxLayout(size_hint_y=None, height=42, spacing=2)
+        for title, action in [
+            ("خانه", self.home),
+            ("نشانک", self.add_bookmark),
+            ("تاریخچه", self.show_history),
+            ("ذخیره", self.save_current_page),
+            ("دانلود", self.download_current),
+        ]:
+            toolbar.add_widget(
+                Button(text=title, on_release=lambda _, fn=action: fn())
+            )
+        root.add_widget(toolbar)
+
+        self.status = Label(
+            text="آماده",
+            size_hint_y=None,
+            height=28
+        )
+        root.add_widget(self.status)
+
+        self.page = Label(
+            text="Yabandeh آماده است.\nآدرس سایت را وارد کن.",
+            size_hint_y=None,
+            halign="left",
+            valign="top"
+        )
+        self.page.bind(
+            width=lambda instance, value:
+            setattr(instance, "text_size", (value, None)),
+            texture_size=lambda instance, value:
+            setattr(instance, "height", value[1])
+        )
+
+        scroll = ScrollView()
+        scroll.add_widget(self.page)
+        root.add_widget(scroll)
+
+        bottom = BoxLayout(size_hint_y=None, height=38, spacing=2)
+        bottom.add_widget(
+            Button(text="بازگشت", on_release=lambda *_: self.go_back())
+        )
+        bottom.add_widget(
+            Button(text="پاک‌کردن", on_release=lambda *_: self.clear_page())
+        )
+        bottom.add_widget(
+            Button(text="خروج", on_release=lambda *_: self.stop())
+        )
+        root.add_widget(bottom)
+
+        return root
+
+    def set_status(self, message):
+        self.status.text = str(message)
+
+    def open_address(self):
+        text = self.address.text.strip()
+        if not text:
+            self.set_status("آدرس یا عبارت جست‌وجو را وارد کن.")
+            return
+
+        if self.search:
+            url = self.search.resolve(text)
+        else:
+            parsed = urlparse(text)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
+                url = text
+            elif " " not in text and "." in text:
+                url = "https://" + text
+            else:
+                from urllib.parse import quote
+                url = "https://www.google.com/search?q=" + quote(text)
+
+        self.load_page(url)
+
+    def load_page(self, url, add_to_back=True):
+        if add_to_back and self.current_url and self.current_text:
+            if self.current_url != url:
+                self.back_stack.append({
+                    "url": self.current_url,
+                    "title": self.current_title,
+                    "text": self.current_text,
+                })
+
+                # محدود کردن حافظهٔ تاریخچهٔ بازگشت
+                self.back_stack = self.back_stack[-50:]
+
+        self.current_url = url
+        self.address.text = url
+        self.set_status("در حال دریافت صفحه...")
+
+        threading.Thread(
+            target=self._fetch_page,
+            args=(url,),
+            daemon=True
+        ).start()
+
+    def _fetch_page(self, url):
+        try:
+            import urllib.request
+            from html.parser import HTMLParser
+
+            class TextExtractor(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.parts = []
+                    self.hidden = 0
+
+                def handle_starttag(self, tag, attrs):
+                    if tag in ("script", "style", "noscript"):
+                        self.hidden += 1
+
+                def handle_endtag(self, tag):
+                    if tag in ("script", "style", "noscript") and self.hidden:
+                        self.hidden -= 1
+                    elif tag in ("p", "div", "br", "h1", "h2", "li"):
+                        self.parts.append("\n")
+
+                def handle_data(self, data):
+                    if not self.hidden and data.strip():
+                        self.parts.append(data.strip() + " ")
+
+            request = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 Yabandeh/1.0"}
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                raw = response.read(2 * 1024 * 1024)
+                charset = response.headers.get_content_charset() or "utf-8"
+
+            html = raw.decode(charset, errors="replace")
+            parser = TextExtractor()
+            parser.feed(html)
+            text = "".join(parser.parts).strip()
+
+            if not text:
+                text = "محتوای متنی قابل نمایش پیدا نشد."
+
+            Clock.schedule_once(
+                lambda dt: self._page_loaded(url, text), 0
+            )
+
+        except Exception as exc:
+            Clock.schedule_once(
+                lambda dt, error=str(exc): self._page_error(error), 0
+            )
+
+    def _page_loaded(self, url, text):
+        self.current_url = url
+        self.current_text = text
+        self.current_title = url
+        self.page.text = text
+        self.set_status("صفحه دریافت شد؛ نمایش متنی است.")
+
+        if self.history:
+            try:
+                self.history.add(url, url)
+            except Exception as exc:
+                self.set_status("صفحه باز شد؛ ثبت تاریخچه ناموفق بود.")
+
+    def _page_error(self, message):
+        self.page.text = "بازکردن صفحه ناموفق بود.\n" + message
+        self.set_status("خطا در دریافت صفحه")
+
+    def home(self):
+        self.address.text = "https://www.google.com"
+        self.load_page(self.address.text)
+
+    def add_bookmark(self):
+        if not self.current_url:
+            self.set_status("ابتدا یک صفحه باز کن.")
+            return
+        if not self.bookmarks:
+            self.set_status("ماژول نشانک در دسترس نیست.")
+            return
+        try:
+            added = self.bookmarks.add(self.current_url, self.current_title)
+            self.set_status("نشانک ثبت شد." if added else "نشانک به‌روز شد.")
+        except Exception as exc:
+            self.set_status("خطا در ثبت نشانک: " + str(exc))
+
+    def show_history(self):
+        if not self.history:
+            self.set_status("ماژول تاریخچه در دسترس نیست.")
+            return
+        try:
+            items = self.history.get_all()
+            self.page.text = "\n\n".join(
+                str(item.get("title", "")) + "\n" +
+                str(item.get("url", ""))
+                for item in items[:100]
+            ) or "تاریخچه خالی است."
+            self.set_status("تاریخچه")
+        except Exception as exc:
+            self.set_status("خطا در تاریخچه: " + str(exc))
+
+    def save_current_page(self):
+        if not self.current_text:
+            self.set_status("صفحه‌ای برای ذخیره وجود ندارد.")
+            return
+
+        try:
+            if save_page:
+                path = save_page(
+                    self.current_text,
+                    self.current_title,
+                    extension="txt"
+                )
+            else:
+                from datetime import datetime
+
+                folder = BASE / "pages"
+                folder.mkdir(parents=True, exist_ok=True)
+
+                path = folder / (
+                    "page_" +
+                    datetime.now().strftime("%Y%m%d_%H%M%S") +
+                    ".txt"
+                )
+                path.write_text(
+                    self.current_text,
+                    encoding="utf-8"
+                )
+
+            self.set_status("ذخیره شد: " + str(path))
+
+        except Exception as exc:
+            self.set_status("خطا در ذخیره: " + str(exc))
+
+    def download_current(self):
+        if not self.current_url:
+            self.set_status("ابتدا یک صفحه باز کن.")
+            return
+
+        try:
+            from core.downloads import DownloadManager
+
+            manager = DownloadManager()
+            self.set_status("دانلود شروع شد...")
+
+            manager.download(
+                self.current_url,
+                callback=self._download_callback
+            )
+
+        except Exception as exc:
+            self.set_status("خطای شروع دانلود: " + str(exc))
+
+    def _download_callback(self, success, message, path):
+        if success:
+            status = "دانلود انجام شد: " + str(message)
+        else:
+            status = "خطای دانلود: " + str(message)
+
+        Clock.schedule_once(
+            lambda dt, msg=status: self.set_status(msg),
+            0
+        )
+
+    def go_back(self):
+        if not self.back_stack:
+            self.set_status("صفحهٔ قبلی در دسترس نیست.")
+            return
+
+        previous = self.back_stack.pop()
+
+        self.current_url = previous["url"]
+        self.current_title = previous["title"]
+        self.current_text = previous["text"]
+
+        self.address.text = self.current_url
+        self.page.text = self.current_text
+        self.set_status("به صفحهٔ قبلی برگشتی.")
+
+    def clear_page(self):
+        self.page.text = ""
+        self.current_text = ""
+        self.set_status("محتوای نمایشی پاک شد.")
+
+
+if __name__ == "__main__":
+    YabandehApp().run()
