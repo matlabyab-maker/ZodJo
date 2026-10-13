@@ -1,9 +1,0 @@
-__pycache__/
-*.pyc
-.buildozer/
-bin/
-build/
-.gradle/
-.idea/
-.vscode/
-.DS_Store

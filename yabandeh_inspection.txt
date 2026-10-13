@@ -1,0 +1,246 @@
+YABANDEH CODE INSPECTION
+============================================
+File: /storage/emulated/0/Yabandeh/main.py
+Total lines: 389
+Syntax check: موفق
+
+RELEVANT CODE
+============================================
+
+...
+0009: from kivy.uix.button import Button as KivyButton
+0010: from kivy.uix.textinput import TextInput
+0011: from kivy.uix.label import Label
+0012: import arabic_reshaper
+0013: from bidi.algorithm import get_display
+0014: from kivy.core.text import LabelBase
+0015: from kivy.uix.scrollview import ScrollView
+0016: 
+0017: 
+0018: def _yabandeh_persian_text(value):
+0019:     """آماده‌سازی متن فارسی برای نمایش در Kivy."""
+0020:     value = str(value)
+0021:     if not any("\u0600" <= char <= "\u06ff" for char in value):
+0022:         return value
+0023:     try:
+0024:         return get_display(arabic_reshaper.reshape(value), base_dir="R")
+0025:     except Exception:
+0026:         return value
+0027: 
+0028: BASE = Path("/storage/emulated/0/Yabandeh")
+
+...
+0061: # اصلاح متن فارسی دکمه‌ها
+0062: def Button(*args, **kwargs):
+0063:     if "text" in kwargs and isinstance(kwargs["text"], str):
+0064:         kwargs["text"] = _yabandeh_persian_text(
+0065:             kwargs["text"]
+0066:         )
+0067:     elif args and isinstance(args[0], str):
+0068:         args = (
+0069:             _yabandeh_persian_text(args[0]),
+0070:         ) + args[1:]
+0071: 
+0072:     return KivyButton(*args, **kwargs)
+0073: 
+
+...
+0084: 
+0085:         self.current_url = ""
+0086:         self.current_title = "Yabandeh"
+0087:         self.current_text = ""
+0088:         self.back_stack = []
+0089: 
+0090:         root = BoxLayout(orientation="vertical", spacing=3, padding=4)
+0091: 
+0092:         address_row = BoxLayout(size_hint_y=None, height=44, spacing=3)
+0093:         self.address = TextInput(
+0094:             font_name="YabandehArabic",
+0095:             hint_text="آدرس سایت یا عبارت جست‌وجو",
+0096:             multiline=False,
+0097:             size_hint_x=1
+0098:         )
+0099:         self.address.bind(on_text_validate=lambda *_: self.open_address())
+0100:         address_row.add_widget(self.address)
+0101:         address_row.add_widget(
+0102:             Button(text="برو", font_name="YabandehArabic", size_hint_x=None, width=58,
+0103:                    on_release=lambda *_: self.open_address())
+0104:         )
+0105:         root.add_widget(address_row)
+0106: 
+
+...
+0113:             ("دانلود", self.download_current),
+0114:         ]:
+0115:             toolbar.add_widget(
+0116:                 Button(text=title, font_name="YabandehArabic", on_release=lambda _, fn=action: fn())
+0117:             )
+0118:         root.add_widget(toolbar)
+0119: 
+0120:         self.status = Label(
+0121:             font_name="YabandehArabic",
+0122:             text="آماده",
+0123:             size_hint_y=None,
+0124:             height=28
+0125:         )
+0126:         root.add_widget(self.status)
+0127: 
+0128:         self.page = Label(
+0129:             font_name="YabandehArabic",
+0130:             text="Yabandeh آماده است.\nآدرس سایت را وارد کن.",
+0131:             size_hint_y=None,
+0132:             halign="right",
+0133:             valign="top"
+0134:         )
+0135:         self.page.bind(
+0136:             width=lambda instance, value:
+0137:             setattr(instance, "text_size", (value, None)),
+0138:             texture_size=lambda instance, value:
+0139:             setattr(instance, "height", value[1])
+0140:         )
+0141: 
+0142:         scroll = ScrollView()
+0143:         scroll.add_widget(self.page)
+0144:         root.add_widget(scroll)
+0145: 
+0146:         bottom = BoxLayout(size_hint_y=None, height=38, spacing=2)
+0147:         bottom.add_widget(
+0148:             Button(text="بازگشت", font_name="YabandehArabic", on_release=lambda *_: self.go_back())
+0149:         )
+0150:         bottom.add_widget(
+0151:             Button(text="پاک‌کردن", font_name="YabandehArabic", on_release=lambda *_: self.clear_page())
+0152:         )
+0153:         bottom.add_widget(
+0154:             Button(text="خروج", font_name="YabandehArabic", on_release=lambda *_: self.stop())
+0155:         )
+0156:         root.add_widget(bottom)
+0157: 
+0158:         return root
+0159: 
+0160:     def set_status(self, message):
+0161:         self.status.text = _yabandeh_persian_text(message)
+0162: 
+0163:     def open_address(self):
+0164:         text = self.address.text.strip()
+0165:         if not text:
+
+...
+0181:         self.load_page(url)
+0182: 
+0183:     def load_page(self, url, add_to_back=True):
+0184:         if add_to_back and self.current_url and self.current_text:
+0185:             if self.current_url != url:
+0186:                 self.back_stack.append({
+0187:                     "url": self.current_url,
+0188:                     "title": self.current_title,
+0189:                     "text": self.current_text,
+0190:                 })
+0191: 
+0192:                 # محدود کردن حافظهٔ تاریخچهٔ بازگشت
+0193:                 self.back_stack = self.back_stack[-50:]
+
+...
+0205:     def _fetch_page(self, url):
+0206:         try:
+0207:             import urllib.request
+0208:             from html.parser import HTMLParser
+0209: 
+0210:             class TextExtractor(HTMLParser):
+0211:                 def __init__(self):
+0212:                     super().__init__()
+
+...
+0231:                 url,
+0232:                 headers={"User-Agent": "Mozilla/5.0 Yabandeh/1.0"}
+0233:             )
+0234:             with urllib.request.urlopen(request, timeout=15) as response:
+0235:                 raw = response.read(2 * 1024 * 1024)
+0236:                 charset = response.headers.get_content_charset() or "utf-8"
+0237: 
+0238:             html = raw.decode(charset, errors="replace")
+0239:             parser = TextExtractor()
+0240:             parser.feed(html)
+0241:             text = "".join(parser.parts).strip()
+0242: 
+0243:             if not text:
+0244:                 text = "محتوای متنی قابل نمایش پیدا نشد."
+
+...
+0254: 
+0255:     def _page_loaded(self, url, text):
+0256:         self.current_url = url
+0257:         self.current_text = text
+0258:         self.current_title = url
+0259:         self.page.text = text
+0260:         self.set_status("صفحه دریافت شد؛ نمایش متنی است.")
+0261: 
+0262:         if self.history:
+0263:             try:
+
+...
+0266:                 self.set_status("صفحه باز شد؛ ثبت تاریخچه ناموفق بود.")
+0267: 
+0268:     def _page_error(self, message):
+0269:         self.page.text = _yabandeh_persian_text("بازکردن صفحه ناموفق بود.\n" + message)
+0270:         self.set_status("خطا در دریافت صفحه")
+0271: 
+0272:     def home(self):
+0273:         self.address.text = "https://www.google.com"
+
+...
+0292:             return
+0293:         try:
+0294:             items = self.history.get_all()
+0295:             self.page.text = _yabandeh_persian_text("\n\n".join(
+0296:                 str(item.get("title", "")) + "\n" +
+0297:                 str(item.get("url", ""))
+0298:                 for item in items[:100]
+0299:             ) or "تاریخچه خالی است.")
+
+...
+0302:             self.set_status("خطا در تاریخچه: " + str(exc))
+0303: 
+0304:     def save_current_page(self):
+0305:         if not self.current_text:
+0306:             self.set_status("صفحه‌ای برای ذخیره وجود ندارد.")
+0307:             return
+0308: 
+0309:         try:
+0310:             if save_page:
+0311:                 path = save_page(
+0312:                     self.current_text,
+0313:                     self.current_title,
+0314:                     extension="txt"
+0315:                 )
+0316:             else:
+
+...
+0325:                     ".txt"
+0326:                 )
+0327:                 path.write_text(
+0328:                     self.current_text,
+0329:                     encoding="utf-8"
+0330:                 )
+0331: 
+0332:             self.set_status("ذخیره شد: " + str(path))
+
+...
+0373: 
+0374:         self.current_url = previous["url"]
+0375:         self.current_title = previous["title"]
+0376:         self.current_text = previous["text"]
+0377: 
+0378:         self.address.text = self.current_url
+0379:         self.page.text = self.current_text
+0380:         self.set_status("به صفحهٔ قبلی برگشتی.")
+0381: 
+0382:     def clear_page(self):
+0383:         self.page.text = ""
+0384:         self.current_text = ""
+0385:         self.set_status("محتوای نمایشی پاک شد.")
+0386: 
+0387: 
+0388: if __name__ == "__main__":
+
+============================================
+END OF REPORT

@@ -6,7 +6,7 @@ import webbrowser
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
+from kivy.uix.button import Button as KivyButton
 from kivy.uix.textinput import TextInput
 from kivy.uix.label import Label
 import arabic_reshaper
@@ -55,6 +55,21 @@ try:
     from core.page_saver import save_page
 except ImportError:
     save_page = None
+
+
+
+# اصلاح متن فارسی دکمه‌ها
+def Button(*args, **kwargs):
+    if "text" in kwargs and isinstance(kwargs["text"], str):
+        kwargs["text"] = _yabandeh_persian_text(
+            kwargs["text"]
+        )
+    elif args and isinstance(args[0], str):
+        args = (
+            _yabandeh_persian_text(args[0]),
+        ) + args[1:]
+
+    return KivyButton(*args, **kwargs)
 
 
 class YabandehApp(App):
@@ -241,7 +256,7 @@ class YabandehApp(App):
         self.current_url = url
         self.current_text = text
         self.current_title = url
-        self.page.text = _yabandeh_persian_text(text)
+        self.page.text = text
         self.set_status("صفحه دریافت شد؛ نمایش متنی است.")
 
         if self.history:
@@ -361,7 +376,7 @@ class YabandehApp(App):
         self.current_text = previous["text"]
 
         self.address.text = self.current_url
-        self.page.text = _yabandeh_persian_text(self.current_text)
+        self.page.text = self.current_text
         self.set_status("به صفحهٔ قبلی برگشتی.")
 
     def clear_page(self):
