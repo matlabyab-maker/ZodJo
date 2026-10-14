@@ -1,0 +1,11 @@
+[core]
+	symlinks = false
+	repositoryformatversion = 0
+	filemode = false
+	logallrefupdates = true
+[user]
+	email = matlabyab@gmail.com
+	name = matlabyab_maker
+[remote "matlabyab-maker"]
+	url = https://github.com/matlabyab-maker/Remote_For_Fast_Keys.git
+	fetch = +refs/heads/*:refs/remotes/matlabyab-maker/*
