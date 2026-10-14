@@ -13,6 +13,7 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 from kivy.core.text import LabelBase
 from kivy.uix.scrollview import ScrollView
+from html import unescape
 
 
 def _yabandeh_persian_text(value):
@@ -92,10 +93,17 @@ class YabandehApp(App):
         address_row = BoxLayout(size_hint_y=None, height=44, spacing=3)
         self.address = TextInput(
             font_name="YabandehArabic",
-            hint_text="آدرس سایت یا عبارت جست‌وجو",
+            hint_text=_yabandeh_persian_text("آدرس سایت یا عبارت جست‌وجو"),
             multiline=False,
+            halign="right",
             size_hint_x=1
         )
+        # متن خام جست‌وجو حفظ می‌شود؛ شکل‌دهی فقط هنگام از دست رفتن فوکوس
+        # انجام می‌شود تا متن ارسالی به موتور جست‌وجو خراب نشود.
+        self._address_raw = ""
+        self._address_rendering = False
+        self.address.bind(text=self._address_text_changed)
+        self.address.bind(focus=self._address_focus_changed)
         self.address.bind(on_text_validate=lambda *_: self.open_address())
         address_row.add_widget(self.address)
         address_row.add_widget(
@@ -161,7 +169,7 @@ class YabandehApp(App):
         self.status.text = _yabandeh_persian_text(message)
 
     def open_address(self):
-        text = self.address.text.strip()
+        text = (self._address_raw if self.address.focus else self._address_raw or self.address.text).strip()
         if not text:
             self.set_status("آدرس یا عبارت جست‌وجو را وارد کن.")
             return
@@ -193,7 +201,10 @@ class YabandehApp(App):
                 self.back_stack = self.back_stack[-50:]
 
         self.current_url = url
+        self._address_raw = url
+        self._address_rendering = True
         self.address.text = url
+        self._address_rendering = False
         self.set_status("در حال دریافت صفحه...")
 
         threading.Thread(
@@ -202,49 +213,126 @@ class YabandehApp(App):
             daemon=True
         ).start()
 
+    def _address_text_changed(self, instance, value):
+        if not self._address_rendering and instance.focus:
+            self._address_raw = value
+
+    def _address_focus_changed(self, instance, focused):
+        self._address_rendering = True
+        try:
+            if focused:
+                # هنگام ویرایش، متن بدون شکل‌دهی باشد تا ویرایش و جست‌وجو سالم بماند.
+                instance.text = self._address_raw
+            else:
+                self._address_raw = instance.text
+                instance.text = _yabandeh_persian_text(self._address_raw)
+        finally:
+            self._address_rendering = False
+
     def _fetch_page(self, url):
         try:
             import urllib.request
             from html.parser import HTMLParser
+            from email.message import Message
 
             class TextExtractor(HTMLParser):
+                BLOCK_TAGS = {
+                    "address", "article", "aside", "blockquote", "br", "dd",
+                    "div", "dl", "dt", "fieldset", "figcaption", "figure",
+                    "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+                    "header", "hr", "li", "main", "nav", "ol", "p", "pre",
+                    "section", "table", "tr", "ul"
+                }
+                SKIP_TAGS = {"script", "style", "noscript", "svg", "iframe"}
+
                 def __init__(self):
-                    super().__init__()
+                    super().__init__(convert_charrefs=True)
                     self.parts = []
-                    self.hidden = 0
+                    self.title_parts = []
+                    self.in_title = False
+                    self.skip_depth = 0
 
                 def handle_starttag(self, tag, attrs):
-                    if tag in ("script", "style", "noscript"):
-                        self.hidden += 1
+                    attrs = dict(attrs)
+                    if tag in self.SKIP_TAGS:
+                        self.skip_depth += 1
+                        return
+                    if self.skip_depth:
+                        return
+                    if tag == "title":
+                        self.in_title = True
+                    if tag in self.BLOCK_TAGS:
+                        self.parts.append("\n")
+                    if tag == "img":
+                        alt = (attrs.get("alt") or "").strip()
+                        if alt:
+                            self.parts.append(" [تصویر: " + alt + "] ")
+
+                def handle_startendtag(self, tag, attrs):
+                    self.handle_starttag(tag, attrs)
+                    self.handle_endtag(tag)
 
                 def handle_endtag(self, tag):
-                    if tag in ("script", "style", "noscript") and self.hidden:
-                        self.hidden -= 1
-                    elif tag in ("p", "div", "br", "h1", "h2", "li"):
+                    if tag in self.SKIP_TAGS and self.skip_depth:
+                        self.skip_depth -= 1
+                        return
+                    if self.skip_depth:
+                        return
+                    if tag == "title":
+                        self.in_title = False
+                    if tag in self.BLOCK_TAGS:
                         self.parts.append("\n")
 
                 def handle_data(self, data):
-                    if not self.hidden and data.strip():
-                        self.parts.append(data.strip() + " ")
+                    if self.skip_depth:
+                        return
+                    value = " ".join(data.split())
+                    if not value:
+                        return
+                    if self.in_title:
+                        self.title_parts.append(value)
+                    # متن‌های خام بین تگ‌ها را با فاصله/خط جدا می‌کنیم.
+                    self.parts.append(value + " ")
+
+                def result(self):
+                    text = "".join(self.parts)
+                    lines = [" ".join(line.split()) for line in text.splitlines()]
+                    text = "\n".join(line for line in lines if line)
+                    return "\n".join(self.title_parts).strip(), text.strip()
 
             request = urllib.request.Request(
                 url,
-                headers={"User-Agent": "Mozilla/5.0 Yabandeh/1.0"}
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 "
+                        "Chrome/120 Mobile Safari/537.36"
+                    ),
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "fa-IR,fa;q=0.9,en;q=0.7",
+                },
             )
-            with urllib.request.urlopen(request, timeout=15) as response:
-                raw = response.read(2 * 1024 * 1024)
-                charset = response.headers.get_content_charset() or "utf-8"
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read(4 * 1024 * 1024)
+                charset = response.headers.get_content_charset()
+                final_url = response.geturl()
 
-            html = raw.decode(charset, errors="replace")
+            # اگر سرور charset نداده باشد، ابتدا UTF-8 و سپس fallback را امتحان می‌کنیم.
+            try:
+                html = raw.decode(charset or "utf-8", errors="replace")
+            except LookupError:
+                html = raw.decode("utf-8", errors="replace")
+
             parser = TextExtractor()
             parser.feed(html)
-            text = "".join(parser.parts).strip()
-
+            title, text = parser.result()
             if not text:
-                text = "محتوای متنی قابل نمایش پیدا نشد."
-
+                text = (
+                    "متن قابل استخراج از این صفحه پیدا نشد.\n"
+                    "ممکن است سایت با JavaScript ساخته شده باشد یا دسترسی را محدود کرده باشد.\n"
+                    "این نسخه محتوای متنی HTML را استخراج می‌کند و هنوز موتور نمایش کامل صفحات وب نیست."
+                )
             Clock.schedule_once(
-                lambda dt: self._page_loaded(url, text), 0
+                lambda dt: self._page_loaded(final_url, text, title), 0
             )
 
         except Exception as exc:
@@ -252,12 +340,12 @@ class YabandehApp(App):
                 lambda dt, error=str(exc): self._page_error(error), 0
             )
 
-    def _page_loaded(self, url, text):
+    def _page_loaded(self, url, text, title=""):
         self.current_url = url
         self.current_text = text
-        self.current_title = url
-        self.page.text = text
-        self.set_status("صفحه دریافت شد؛ نمایش متنی است.")
+        self.current_title = title or url
+        self.page.text = _yabandeh_persian_text(text)
+        self.set_status("متن صفحه دریافت شد؛ تصاویر و صفحات JavaScript هنوز پشتیبانی کامل ندارند.")
 
         if self.history:
             try:
@@ -375,8 +463,11 @@ class YabandehApp(App):
         self.current_title = previous["title"]
         self.current_text = previous["text"]
 
+        self._address_raw = self.current_url
+        self._address_rendering = True
         self.address.text = self.current_url
-        self.page.text = self.current_text
+        self._address_rendering = False
+        self.page.text = _yabandeh_persian_text(self.current_text)
         self.set_status("به صفحهٔ قبلی برگشتی.")
 
     def clear_page(self):
